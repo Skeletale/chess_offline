@@ -58,13 +58,13 @@ class Board {
       // Black back rank (row 0) and pawns (row 1)
       board.squares[0][col] =
           Piece(type: backRank[col], color: PieceColor.black);
-      board.squares[1][col] = const Piece(
+      board.squares[1][col] = Piece(
         type: PieceType.pawn,
         color: PieceColor.black,
       );
 
       // White pawns (row 6) and back rank (row 7)
-      board.squares[6][col] = const Piece(
+      board.squares[6][col] = Piece(
         type: PieceType.pawn,
         color: PieceColor.white,
       );
