@@ -4,7 +4,6 @@ import '../../models/move.dart';
 import '../../models/piece.dart';
 import '../../models/position.dart';
 
-/// Unicode symbols for each piece, white and black variants.
 const Map<PieceType, String> _whiteSymbols = {
   PieceType.king: '♔',
   PieceType.queen: '♕',
@@ -28,14 +27,10 @@ String pieceSymbol(Piece piece) {
   return map[piece.type]!;
 }
 
-/// A renders-only, fixed-orientation (white at bottom) 8x8 chessboard.
-/// Selection/highlighting/tap handling is driven entirely by the parent
-/// via callbacks and the [selectedSquare] / [legalTargets] params, so this
-/// widget has no internal game-rule knowledge.
 class ChessBoard extends StatelessWidget {
   final Board board;
   final Position? selectedSquare;
-  final List<Move> legalTargets; // legal moves FROM selectedSquare
+  final List<Move> legalTargets;
   final Position? lastMoveFrom;
   final Position? lastMoveTo;
   final void Function(Position pos) onSquareTap;
@@ -71,7 +66,8 @@ class ChessBoard extends StatelessWidget {
 
   Widget _buildSquare(Position pos) {
     final isDark = (pos.row + pos.col) % 2 == 1;
-    final baseColor = isDark ? const Color(0xFF769656) : const Color(0xFFEEEED2);
+    final baseColor =
+        isDark ? const Color(0xFF769656) : const Color(0xFFEEEED2);
 
     final isSelected = selectedSquare == pos;
     final isLastMove = pos == lastMoveFrom || pos == lastMoveTo;
@@ -90,42 +86,48 @@ class ChessBoard extends StatelessWidget {
 
     return GestureDetector(
       onTap: () => onSquareTap(pos),
-      child: Container(
-        color: squareColor,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            if (piece != null)
-              Text(
-                pieceSymbol(piece),
-                style: const TextStyle(fontSize: 32),
-              ),
-            if (isLegalTarget && piece == null)
-              Container(
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.3),
-                  shape: BoxShape.circle,
+      child: SizedBox.expand(
+        child: ColoredBox(
+          color: squareColor,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (piece != null)
+                Center(
+                  child: Text(
+                    pieceSymbol(piece),
+                    style: const TextStyle(fontSize: 32),
+                  ),
                 ),
-              ),
-            if (isCapture)
-              Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.black.withOpacity(0.4), width: 3),
+              if (isLegalTarget && piece == null)
+                Center(
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
                 ),
-              ),
-          ],
+              if (isCapture)
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.black.withOpacity(0.4),
+                      width: 3,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// Dialog shown when a pawn move reaches the promotion rank.
-/// Returns the chosen PieceType, or null if dismissed (caller should
-/// re-prompt or cancel the move in that case).
 Future<PieceType?> showPromotionDialog(BuildContext context, PieceColor color) {
   return showDialog<PieceType>(
     context: context,
@@ -142,7 +144,8 @@ Future<PieceType?> showPromotionDialog(BuildContext context, PieceColor color) {
         content: Row(
           mainAxisSize: MainAxisSize.min,
           children: options.map((type) {
-            final symbol = (color == PieceColor.white ? _whiteSymbols : _blackSymbols)[type]!;
+            final symbol =
+                (color == PieceColor.white ? _whiteSymbols : _blackSymbols)[type]!;
             return IconButton(
               iconSize: 36,
               onPressed: () => Navigator.of(context).pop(type),
