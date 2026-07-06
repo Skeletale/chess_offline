@@ -1,6 +1,6 @@
-// lib/ui/screens/game_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/ai_engine.dart';
 import '../../core/clock.dart';
 import '../../core/game_state.dart';
 import '../../models/move.dart';
@@ -13,12 +13,16 @@ class GameScreen extends StatefulWidget {
   final Duration whiteTime;
   final Duration blackTime;
   final TimeControlMode timeControlMode;
+  final AiDifficulty? aiDifficulty; // null = 2-player mode
+  final PieceColor humanColor; // which side the human plays in vs-AI mode
 
   const GameScreen({
     super.key,
     required this.whiteTime,
     required this.blackTime,
     required this.timeControlMode,
+    this.aiDifficulty,
+    this.humanColor = PieceColor.white,
   });
 
   @override
@@ -32,15 +36,18 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   List<Move> _legalTargets = [];
   Timer? _gameClockTimer;
   bool _gameOver = false;
+  bool _isAiThinking = false;
 
-  // Per-move clock snapshots for undo time restoration.
-  // Each entry stores [whiteRemaining, blackRemaining] before that move was made.
+  bool get _isVsAi => widget.aiDifficulty != null;
+  PieceColor get _aiColor =>
+      widget.humanColor == PieceColor.white ? PieceColor.black : PieceColor.white;
+
   final List<(Duration, Duration)> _clockSnapshots = [];
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // FIX 2: register lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
     _gameState = GameState();
     _clock = Clock(
       whiteTime: widget.whiteTime,
@@ -48,35 +55,35 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       initialPlayer: PieceColor.white,
     );
     _startGameClock();
+
+    // If human plays Black, AI (White) must make the opening move.
+    if (_isVsAi && widget.humanColor == PieceColor.black) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _triggerAiMove());
+    }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this); // FIX 2: clean up observer
+    WidgetsBinding.instance.removeObserver(this);
     _gameClockTimer?.cancel();
     super.dispose();
   }
 
-  // FIX 2: Pause clock when app goes to background, resume when it returns.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_gameOver) return;
+    if (_gameOver || _isAiThinking) return;
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
       _gameClockTimer?.cancel();
       _gameClockTimer = null;
     } else if (state == AppLifecycleState.resumed) {
-      if (_gameClockTimer == null) {
-        _startGameClock();
-      }
+      if (_gameClockTimer == null) _startGameClock();
     }
   }
 
   String _format(Duration d) {
-    if (d == Duration.zero && widget.timeControlMode == TimeControlMode.unlimited) {
-      return '--:--';
-    }
+    if (widget.timeControlMode == TimeControlMode.unlimited) return '--:--';
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
@@ -86,15 +93,15 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     if (widget.timeControlMode == TimeControlMode.unlimited) return;
     _gameClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      setState(() {
-        _clock.decrement(const Duration(seconds: 1));
-      });
+      setState(() => _clock.decrement(const Duration(seconds: 1)));
       _checkTimeout();
     });
   }
 
   void _onSquareTap(Position pos) {
-    if (_gameOver) return;
+    if (_gameOver || _isAiThinking) return;
+    if (_isVsAi && _gameState.board.turn != widget.humanColor) return;
+
     final piece = _gameState.board.pieceAt(pos);
 
     if (_selectedSquare != null) {
@@ -138,7 +145,6 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       );
     }
 
-    // FIX 1: Snapshot the clock BEFORE applying the move so undo can restore it.
     _clockSnapshots.add((_clock.whiteRemaining, _clock.blackRemaining));
 
     setState(() {
@@ -149,25 +155,71 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     });
 
     _checkTimeout();
+    if (_gameOver) return;
     _checkGameOver();
+    if (_gameOver) return;
+
+    if (_isVsAi) _triggerAiMove();
+  }
+
+  Future<void> _triggerAiMove() async {
+    setState(() => _isAiThinking = true);
+
+    // Run the AI computation alongside a minimum 2s delay so the response
+    // never feels instant/unnatural, even on Easy/Medium difficulty.
+    final results = await Future.wait<dynamic>([
+      AiEngine.getBestMove(_gameState.board, widget.aiDifficulty!),
+      Future.delayed(const Duration(seconds: 2)),
+    ]);
+    final move = results[0] as Move?;
+
+    if (!mounted) return;
+
+    if (move != null) {
+      _clockSnapshots.add((_clock.whiteRemaining, _clock.blackRemaining));
+
+      setState(() {
+        _gameState.makeMove(move);
+        _clock.switchPlayer();
+        _isAiThinking = false;
+      });
+
+      _checkTimeout();
+      if (!_gameOver) _checkGameOver();
+    } else {
+      setState(() => _isAiThinking = false);
+    }
   }
 
   void _undo() {
-    if (!_gameState.canUndo) return;
+    if (!_gameState.canUndo || _isAiThinking) return;
     setState(() {
-      _gameState.undo();
+      if (_isVsAi) {
+        _gameState.undo();
+        if (_clockSnapshots.isNotEmpty) _clockSnapshots.removeLast();
+
+        if (_gameState.canUndo) {
+          _gameState.undo();
+          if (_clockSnapshots.isNotEmpty) {
+            final snapshot = _clockSnapshots.removeLast();
+            _clock.whiteRemaining = snapshot.$1;
+            _clock.blackRemaining = snapshot.$2;
+            _clock.currentPlayer = _gameState.board.turn;
+          }
+        }
+      } else {
+        _gameState.undo();
+        if (_clockSnapshots.isNotEmpty) {
+          final snapshot = _clockSnapshots.removeLast();
+          _clock.whiteRemaining = snapshot.$1;
+          _clock.blackRemaining = snapshot.$2;
+          _clock.currentPlayer = _gameState.board.turn;
+        }
+      }
+
       _selectedSquare = null;
       _legalTargets = [];
 
-      // FIX 1: Restore the clock snapshot from before this move.
-      if (_clockSnapshots.isNotEmpty) {
-        final snapshot = _clockSnapshots.removeLast();
-        _clock.whiteRemaining = snapshot.$1;
-        _clock.blackRemaining = snapshot.$2;
-        _clock.currentPlayer = _gameState.board.turn;
-      }
-
-      // If game was over and player undoes, re-enable play and restart clock.
       if (_gameOver) {
         _gameOver = false;
         _startGameClock();
@@ -176,14 +228,13 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 
   void _checkTimeout() {
-    if (_gameOver) return; // FIX 3: prevent firing multiple times
+    if (_gameOver) return;
     if (widget.timeControlMode == TimeControlMode.unlimited) return;
 
     final whiteOut = !_clock.hasTimeLeft(PieceColor.white);
     final blackOut = !_clock.hasTimeLeft(PieceColor.black);
     if (!whiteOut && !blackOut) return;
 
-    // FIX 3: Cancel timer BEFORE showing dialog so it can't fire again.
     _gameClockTimer?.cancel();
     _gameClockTimer = null;
     _gameOver = true;
@@ -276,11 +327,59 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       _selectedSquare = null;
       _legalTargets = [];
       _gameOver = false;
+      _isAiThinking = false;
       _clockSnapshots.clear();
       _clock.resetClocks();
       _gameClockTimer?.cancel();
       _startGameClock();
     });
+
+    if (_isVsAi && widget.humanColor == PieceColor.black) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _triggerAiMove());
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Captured pieces — derived from move history, so undo keeps this correct.
+  // ---------------------------------------------------------------------
+
+  List<Piece> _capturedPieces(PieceColor color) {
+    final captured = <Piece>[];
+    for (final move in _gameState.board.moveHistory) {
+      if (move.capturedPiece != null && move.capturedPiece!.color == color) {
+        captured.add(move.capturedPiece!);
+      }
+    }
+    captured.sort((a, b) => _pieceOrder(b.type) - _pieceOrder(a.type));
+    return captured;
+  }
+
+  int _pieceOrder(PieceType t) {
+    switch (t) {
+      case PieceType.queen:  return 5;
+      case PieceType.rook:   return 4;
+      case PieceType.bishop: return 3;
+      case PieceType.knight: return 2;
+      case PieceType.pawn:   return 1;
+      case PieceType.king:   return 0;
+    }
+  }
+
+  Widget _capturedRow(PieceColor colorCaptured) {
+    final pieces = _capturedPieces(colorCaptured);
+    return SizedBox(
+      height: 28,
+      child: pieces.isEmpty
+          ? const SizedBox.shrink()
+          : Row(
+              children: pieces
+                  .map((p) => Text(
+                        pieceSymbol(p),
+                        style: const TextStyle(fontSize: 22),
+                      ))
+                  .toList(),
+            ),
+    );
   }
 
   @override
@@ -290,31 +389,53 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: const Color(0xFF2D6A4F),
+        iconTheme: const IconThemeData(color: Colors.white),
         title: Row(
           children: [
-            Text(
-              'W: ${_format(_clock.whiteRemaining)}',
-              style: TextStyle(
-                color: _clock.hasTimeLeft(PieceColor.white) || widget.timeControlMode == TimeControlMode.unlimited
-                    ? Colors.white
-                    : Colors.red,
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('White',
+                    style: TextStyle(color: Colors.white70, fontSize: 11)),
+                Text(
+                  _format(_clock.whiteRemaining),
+                  style: TextStyle(
+                    color: _clock.hasTimeLeft(PieceColor.white) ||
+                            widget.timeControlMode == TimeControlMode.unlimited
+                        ? Colors.white
+                        : Colors.redAccent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 20),
-            Text(
-              'B: ${_format(_clock.blackRemaining)}',
-              style: TextStyle(
-                color: _clock.hasTimeLeft(PieceColor.black) || widget.timeControlMode == TimeControlMode.unlimited
-                    ? Colors.white
-                    : Colors.red,
-              ),
+            const SizedBox(width: 30),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Black',
+                    style: TextStyle(color: Colors.white70, fontSize: 11)),
+                Text(
+                  _format(_clock.blackRemaining),
+                  style: TextStyle(
+                    color: _clock.hasTimeLeft(PieceColor.black) ||
+                            widget.timeControlMode == TimeControlMode.unlimited
+                        ? Colors.white
+                        : Colors.redAccent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.undo),
-            onPressed: _gameState.canUndo ? _undo : null,
+            icon: const Icon(Icons.undo, color: Colors.white),
+            onPressed: (_gameState.canUndo && !_isAiThinking) ? _undo : null,
           ),
         ],
       ),
@@ -323,33 +444,64 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           children: [
             Padding(
               padding: const EdgeInsets.all(8.0),
-              child: Text(
-                '${turn == PieceColor.white ? "White" : "Black"} to move'
-                '${inCheck ? "  •  CHECK" : ""}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
+              child: _isAiThinking
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF2D6A4F),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'AI is thinking...',
+                          style: TextStyle(
+                              fontSize: 16, fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      '${turn == PieceColor.white ? "White" : "Black"} to move'
+                      '${inCheck ? "  •  CHECK" : ""}',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
             ),
-           LayoutBuilder(
-  builder: (context, constraints) {
-    final boardSize = constraints.maxWidth;
-    return SizedBox(
-      width: boardSize,
-      height: boardSize,
-      child: ChessBoard(
-        board: _gameState.board,
-        selectedSquare: _selectedSquare,
-        legalTargets: _legalTargets,
-        lastMoveFrom: _gameState.board.moveHistory.isNotEmpty
-            ? _gameState.board.moveHistory.last.from
-            : null,
-        lastMoveTo: _gameState.board.moveHistory.isNotEmpty
-            ? _gameState.board.moveHistory.last.to
-            : null,
-        onSquareTap: _onSquareTap,
-      ),
-    );
-  },
-),
+            // Black's captured pieces (white pieces black has taken)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: _capturedRow(PieceColor.white),
+            ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final boardSize = constraints.maxWidth;
+                return SizedBox(
+                  width: boardSize,
+                  height: boardSize,
+                  child: ChessBoard(
+                    board: _gameState.board,
+                    selectedSquare: _selectedSquare,
+                    legalTargets: _legalTargets,
+                    lastMoveFrom: _gameState.board.moveHistory.isNotEmpty
+                        ? _gameState.board.moveHistory.last.from
+                        : null,
+                    lastMoveTo: _gameState.board.moveHistory.isNotEmpty
+                        ? _gameState.board.moveHistory.last.to
+                        : null,
+                    onSquareTap: _onSquareTap,
+                  ),
+                );
+              },
+            ),
+            // White's captured pieces (black pieces white has taken)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: _capturedRow(PieceColor.black),
+            ),
           ],
         ),
       ),

@@ -30,7 +30,8 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - Undo / move history ✅
 - Draw rules: threefold repetition, 50-move rule, insufficient material ✅
 - Time controls: 5 min / 10 min / Unlimited ✅
-- AI opponent with minimax + alpha-beta pruning (multiple difficulty levels) ❌ Phase 5
+- AI opponent with minimax + alpha-beta pruning (multiple difficulty levels) ✅
+- Captured pieces display ✅ (added during Phase 5, not originally scoped but small enough to fold in)
 - Board/piece themes ❌ Phase 6
 - Sound effects ❌ Phase 6
 
@@ -43,11 +44,12 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - Undo restores time spent on undone move ✅
 - Timeout = loss (unless opponent has insufficient material → draw) ✅
 
-### AI rules (agreed in spec)
-- Minimax + alpha-beta pruning (NOT Stockfish)
-- 2-3 difficulty levels controlled by search depth + randomness
-- AI plays as Black by default
-- Runs on a separate Isolate so UI doesn't freeze during think time (decision pending)
+### AI rules (agreed in spec, all implemented)
+- Minimax (negamax formulation) + alpha-beta pruning (NOT Stockfish) ✅
+- 3 difficulty levels controlled by search depth + randomness: Easy (depth 2, 30% random move), Medium (depth 3), Hard (depth 4) ✅
+- Player can choose to play as White or Black (AI takes the other side) ✅ — expanded from original "AI plays as Black by default"
+- Runs on a separate Isolate via `compute()` so UI doesn't freeze during think time ✅
+- Minimum 2-second "thinking" delay enforced on every AI move (via `Future.wait` with the real computation) so Easy/Medium responses don't feel instant/unnatural ✅
 
 ---
 
@@ -62,6 +64,7 @@ chess_offline/
       game_state.dart         ✅ complete
       clock.dart              ✅ complete
       time_control.dart       ✅ complete
+      ai_engine.dart          ✅ complete
     models/
       piece.dart              ✅ complete
       position.dart           ✅ complete
@@ -70,7 +73,7 @@ chess_offline/
     state/                    (empty, for future provider state)
     ui/
       screens/
-        setup_screen.dart     ✅ complete (time control only; game mode to be added in Phase 5)
+        setup_screen.dart     ✅ complete (game mode, difficulty, play-as-color, time control)
         game_screen.dart      ✅ complete
       widgets/
         chess_board.dart      ✅ complete
@@ -117,8 +120,27 @@ All headless (no UI dependency), pure Dart logic.
   - `_clockSnapshots` list saves `(whiteRemaining, blackRemaining)` before every move for undo restoration
   - `WidgetsBindingObserver` pauses clock on app background, resumes on foreground
   - `_gameOver` bool prevents timeout dialog from firing multiple times
-  - Clock display in AppBar (turns red on timeout), undo restores clock snapshot
+  - Clock display in AppBar (turns red on timeout, dark green background, White/Black labels), undo restores clock snapshot
   - Board locked to square shape via `LayoutBuilder` + `SizedBox` (width == height == screen width)
+
+### Phase 5 — AI Opponent ✅
+- `ai_engine.dart`:
+  - `AiDifficulty` enum: `easy`, `medium`, `hard`
+  - Negamax search with alpha-beta pruning, depths: Easy = 2, Medium = 3, Hard = 4
+  - Easy mode has a 30% chance of playing a random legal move instead of the best one (for variety/beatability)
+  - Piece-square tables for pawn/knight/bishop/rook/queen/king positional scoring, plus standard material values
+  - `AiEngine.getBestMove()` runs the search via Flutter's `compute()` so it executes on a separate Isolate — UI never freezes, even on Hard
+- `setup_screen.dart` updates:
+  - `GameMode` enum (`twoPlayer` / `vsAi`) picker
+  - When vs-AI selected: difficulty picker (Easy/Medium/Hard) and "Play As" picker (White/Black) appear
+  - Start button only enables once all required selections for the chosen mode are made
+- `game_screen.dart` updates:
+  - New params: `aiDifficulty` (null = 2-player) and `humanColor` (which side the human plays)
+  - `_isAiThinking` flag blocks board taps and swaps the turn indicator for a "AI is thinking..." spinner
+  - AI move auto-triggers after the human's move (or immediately on game start if the human chose Black)
+  - Minimum 2-second "thinking" delay enforced via `Future.wait([AiEngine.getBestMove(...), Future.delayed(2s)])` so fast Easy/Medium responses don't feel instant
+  - Undo in vs-AI mode undoes both the AI's move and the human's move together (so it always lands back on the human's turn)
+  - Captured pieces shown as two rows above/below the board, derived live from `board.moveHistory` (stays correct through undo automatically)
 
 ---
 
@@ -137,6 +159,13 @@ All headless (no UI dependency), pure Dart logic.
 - Clock pauses when app is backgrounded ✅
 - Timeout ends the game with a dialog (fires once only) ✅
 - Unlimited mode shows --:-- and never times out ✅
+- Setup screen: game mode, difficulty, play-as-color, time control all selectable ✅
+- AI makes legal moves at all 3 difficulty levels ✅
+- AI opens as White automatically when human picks Black ✅
+- AI move always takes at least ~2 seconds (feels natural, not instant) ✅
+- UI stays responsive while AI is "thinking" (no freeze, confirmed on Redmi Note 10 Pro) ✅
+- Undo in vs-AI mode correctly undoes both AI + human moves together ✅
+- Captured pieces display above/below board, updates correctly through undo ✅
 
 ---
 
@@ -151,33 +180,7 @@ All headless (no UI dependency), pure Dart logic.
 
 ## Next Phase to Implement
 
-### Phase 5 — AI Opponent
-Three files need to be created/modified:
-
-**1. Create `lib/core/ai_engine.dart`**
-- Minimax with alpha-beta pruning
-- Piece-square evaluation tables for positional scoring
-- Difficulty levels:
-  - Easy: depth 1–2 + randomness
-  - Medium: depth 3
-  - Hard: depth 4–5
-- Decision pending: run on separate Isolate (smooth UI) vs simple call (may freeze briefly on Hard)
-
-**2. Update `lib/ui/screens/setup_screen.dart`**
-- Add game mode selection: 2-Player vs vs-AI
-- If vs-AI selected, show difficulty picker (Easy / Medium / Hard)
-- Then show time control picker (existing)
-- Pass game mode + difficulty to `GameScreen`
-
-**3. Update `lib/ui/screens/game_screen.dart`**
-- Accept `isVsAI` bool and `AiDifficulty` level as constructor params
-- After human (White) makes a move, trigger AI to compute Black's move
-- Show a subtle "AI thinking..." indicator while computing
-- AI move applied automatically, clocks switch as normal
-
----
-
-### Phase 6 — Themes & Sound (after Phase 5)
+### Phase 6 — Themes & Sound
 - Multiple board color themes (Classic green, Brown wood, Blue ocean, etc.)
 - Multiple piece sets (unicode symbols already in place, can add image-based sets)
 - Sound effects via `audioplayers`: move, capture, check, game-end
