@@ -1,8 +1,5 @@
 // lib/ui/screens/game_screen.dart
-// ──────────────────────────────────────────────────────────────
-//  GameScreen – shows the board and the two clocks
-// ──────────────────────────────────────────────────────────────
-import 'dart:async'; // NEW: Required for Timer
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/clock.dart';
 import '../../core/game_state.dart';
@@ -10,7 +7,7 @@ import '../../models/move.dart';
 import '../../models/piece.dart';
 import '../../models/position.dart';
 import '../widgets/chess_board.dart';
-import 'package:chess_offline/core/time_control.dart'; // Import the enum
+import 'package:chess_offline/core/time_control.dart';
 
 class GameScreen extends StatefulWidget {
   final Duration whiteTime;
@@ -28,60 +25,78 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   late GameState _gameState;
   late Clock _clock;
   Position? _selectedSquare;
   List<Move> _legalTargets = [];
-  Stopwatch? _moveTimer = Stopwatch(); // Measures time for individual moves
-  Timer? _gameClockTimer; // NEW: The main timer for decrementing game time
+  Timer? _gameClockTimer;
+  bool _gameOver = false;
+
+  // Per-move clock snapshots for undo time restoration.
+  // Each entry stores [whiteRemaining, blackRemaining] before that move was made.
+  final List<(Duration, Duration)> _clockSnapshots = [];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // FIX 2: register lifecycle observer
     _gameState = GameState();
     _clock = Clock(
       whiteTime: widget.whiteTime,
       blackTime: widget.blackTime,
-      initialPlayer: PieceColor.white, // White starts
+      initialPlayer: PieceColor.white,
     );
-    _moveTimer?.start(); // Start the move timer
-    _startGameClock(); // NEW: Start the main game clock
+    _startGameClock();
   }
 
   @override
   void dispose() {
-    _moveTimer?.stop(); // Stop the move timer
-    _moveTimer = null;
-    _gameClockTimer?.cancel(); // NEW: Cancel the game clock timer
+    WidgetsBinding.instance.removeObserver(this); // FIX 2: clean up observer
+    _gameClockTimer?.cancel();
     super.dispose();
   }
 
-  /// Helper – formats a [Duration] as `mm:ss`.
+  // FIX 2: Pause clock when app goes to background, resume when it returns.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_gameOver) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _gameClockTimer?.cancel();
+      _gameClockTimer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      if (_gameClockTimer == null) {
+        _startGameClock();
+      }
+    }
+  }
+
   String _format(Duration d) {
-    if (d == Duration.zero) return '--:--';
+    if (d == Duration.zero && widget.timeControlMode == TimeControlMode.unlimited) {
+      return '--:--';
+    }
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
   }
 
-  // NEW: Starts the main game clock
   void _startGameClock() {
-    if (widget.timeControlMode == TimeControlMode.unlimited) {
-      return; // No timer for unlimited mode
-    }
-    _gameClockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    if (widget.timeControlMode == TimeControlMode.unlimited) return;
+    _gameClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
       setState(() {
         _clock.decrement(const Duration(seconds: 1));
-        _checkTimeout(); // Check for timeout every second
       });
+      _checkTimeout();
     });
   }
 
   void _onSquareTap(Position pos) {
+    if (_gameOver) return;
     final piece = _gameState.board.pieceAt(pos);
 
-    // Case 1: Tapping a highlighted legal target -> make the move.
     if (_selectedSquare != null) {
       final matchingMoves = _legalTargets.where((m) => m.to == pos).toList();
       if (matchingMoves.isNotEmpty) {
@@ -90,7 +105,6 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    // Case 2: Tapping a piece of the side to move -> select it.
     if (piece != null && piece.color == _gameState.board.turn) {
       setState(() {
         _selectedSquare = pos;
@@ -99,7 +113,6 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // Case 3: Tapping anything else -> deselect.
     setState(() {
       _selectedSquare = null;
       _legalTargets = [];
@@ -107,98 +120,108 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Future<void> _attemptMove(List<Move> matchingMoves) async {
-    Move moveToPlay = matchingMoves.first; // Default to the first move
+    Move moveToPlay = matchingMoves.first;
 
-    // Handle promotion choices
     if (matchingMoves.length > 1) {
       final color = matchingMoves.first.piece.color;
       final chosenType = await showPromotionDialog(context, color);
       if (chosenType == null) {
-        // Cancel the move if the dialog was dismissed
         setState(() {
           _selectedSquare = null;
           _legalTargets = [];
         });
         return;
       }
-      // Find the specific move that matches the chosen promotion type
-      moveToPlay = matchingMoves.firstWhere((m) => m.promotionType == chosenType, orElse: () => matchingMoves.first);
+      moveToPlay = matchingMoves.firstWhere(
+        (m) => m.promotionType == chosenType,
+        orElse: () => matchingMoves.first,
+      );
     }
+
+    // FIX 1: Snapshot the clock BEFORE applying the move so undo can restore it.
+    _clockSnapshots.add((_clock.whiteRemaining, _clock.blackRemaining));
 
     setState(() {
       _gameState.makeMove(moveToPlay);
       _selectedSquare = null;
       _legalTargets = [];
-
-      // Switch to the other player's turn and clock
       _clock.switchPlayer();
-      _moveTimer?.reset(); // Reset move timer for the next player's move
-      _moveTimer?.start(); // Start timer for the next move
     });
 
     _checkTimeout();
     _checkGameOver();
   }
 
-  void _checkTimeout() {
-    // If time controls are active and a player's time runs out
-    if (widget.timeControlMode != TimeControlMode.unlimited) {
-      if (!_clock.hasTimeLeft(PieceColor.white) || !_clock.hasTimeLeft(PieceColor.black)) {
-        // Game over due to timeout
-        _gameClockTimer?.cancel(); // Stop the clock on timeout
-        _moveTimer?.stop();
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Game Over'),
-            content: Text('${_clock.currentPlayer == PieceColor.white ? "White" : "Black"}\'s time ran out!'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _startNewGame(); // Start a new game
-                },
-                child: const Text('New Game'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        );
-      }
-    }
-  }
-
   void _undo() {
+    if (!_gameState.canUndo) return;
     setState(() {
       _gameState.undo();
       _selectedSquare = null;
       _legalTargets = [];
-      // TODO: Restore time for undone move here if needed
+
+      // FIX 1: Restore the clock snapshot from before this move.
+      if (_clockSnapshots.isNotEmpty) {
+        final snapshot = _clockSnapshots.removeLast();
+        _clock.whiteRemaining = snapshot.$1;
+        _clock.blackRemaining = snapshot.$2;
+        _clock.currentPlayer = _gameState.board.turn;
+      }
+
+      // If game was over and player undoes, re-enable play and restart clock.
+      if (_gameOver) {
+        _gameOver = false;
+        _startGameClock();
+      }
     });
   }
 
-  void _startNewGame() {
-    setState(() {
-      _gameState = GameState(); // Reset game state
-      _selectedSquare = null;
-      _legalTargets = [];
-      _clock.resetClocks(); // Reset clocks
-      _moveTimer?.reset(); // Reset move timer
-      _moveTimer?.start();
-      _gameClockTimer?.cancel(); // Cancel old timer
-      _startGameClock(); // Start new game clock
-    });
+  void _checkTimeout() {
+    if (_gameOver) return; // FIX 3: prevent firing multiple times
+    if (widget.timeControlMode == TimeControlMode.unlimited) return;
+
+    final whiteOut = !_clock.hasTimeLeft(PieceColor.white);
+    final blackOut = !_clock.hasTimeLeft(PieceColor.black);
+    if (!whiteOut && !blackOut) return;
+
+    // FIX 3: Cancel timer BEFORE showing dialog so it can't fire again.
+    _gameClockTimer?.cancel();
+    _gameClockTimer = null;
+    _gameOver = true;
+
+    final loser = whiteOut ? PieceColor.white : PieceColor.black;
+    final message = '${loser == PieceColor.white ? "White" : "Black"}\'s time ran out!';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Game Over'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _startNewGame();
+            },
+            child: const Text('New Game'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _checkGameOver() {
+    if (_gameOver) return;
     final result = _gameState.result;
     if (result == GameResult.ongoing) return;
 
-    _gameClockTimer?.cancel(); // Stop the clock on game over
-    _moveTimer?.stop();
+    _gameClockTimer?.cancel();
+    _gameClockTimer = null;
+    _gameOver = true;
 
     String message;
     switch (result) {
@@ -221,29 +244,43 @@ class _GameScreenState extends State<GameScreen> {
         message = 'Draw — Insufficient material';
         break;
       default:
-        return; // Should not happen
+        return;
     }
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Game Over'),
         content: Text(message),
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.of(context).pop(); // Close dialog
-              _startNewGame(); // Start a new game
+              Navigator.of(context).pop();
+              _startNewGame();
             },
             child: const Text('New Game'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(), // Close dialog
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),
           ),
         ],
       ),
     );
+  }
+
+  void _startNewGame() {
+    setState(() {
+      _gameState = GameState();
+      _selectedSquare = null;
+      _legalTargets = [];
+      _gameOver = false;
+      _clockSnapshots.clear();
+      _clock.resetClocks();
+      _gameClockTimer?.cancel();
+      _startGameClock();
+    });
   }
 
   @override
@@ -255,19 +292,21 @@ class _GameScreenState extends State<GameScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            // White Clock Display
             Text(
-              'White: ${_format(_clock.whiteRemaining)}',
+              'W: ${_format(_clock.whiteRemaining)}',
               style: TextStyle(
-                color: _clock.hasTimeLeft(PieceColor.white) ? Colors.white : Colors.red,
+                color: _clock.hasTimeLeft(PieceColor.white) || widget.timeControlMode == TimeControlMode.unlimited
+                    ? Colors.white
+                    : Colors.red,
               ),
             ),
             const SizedBox(width: 20),
-            // Black Clock Display
             Text(
-              'Black: ${_format(_clock.blackRemaining)}',
+              'B: ${_format(_clock.blackRemaining)}',
               style: TextStyle(
-                color: _clock.hasTimeLeft(PieceColor.black) ? Colors.white : Colors.red,
+                color: _clock.hasTimeLeft(PieceColor.black) || widget.timeControlMode == TimeControlMode.unlimited
+                    ? Colors.white
+                    : Colors.red,
               ),
             ),
           ],
@@ -286,24 +325,31 @@ class _GameScreenState extends State<GameScreen> {
               padding: const EdgeInsets.all(8.0),
               child: Text(
                 '${turn == PieceColor.white ? "White" : "Black"} to move'
-                    '${inCheck ? "  •  CHECK" : ""}',
+                '${inCheck ? "  •  CHECK" : ""}',
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
-            Expanded(
-              child: ChessBoard(
-                board: _gameState.board,
-                selectedSquare: _selectedSquare,
-                legalTargets: _legalTargets,
-                lastMoveFrom: _gameState.board.moveHistory.isNotEmpty
-                    ? _gameState.board.moveHistory.last.from
-                    : null,
-                lastMoveTo: _gameState.board.moveHistory.isNotEmpty
-                    ? _gameState.board.moveHistory.last.to
-                    : null,
-                onSquareTap: _onSquareTap,
-              ),
-            ),
+           LayoutBuilder(
+  builder: (context, constraints) {
+    final boardSize = constraints.maxWidth;
+    return SizedBox(
+      width: boardSize,
+      height: boardSize,
+      child: ChessBoard(
+        board: _gameState.board,
+        selectedSquare: _selectedSquare,
+        legalTargets: _legalTargets,
+        lastMoveFrom: _gameState.board.moveHistory.isNotEmpty
+            ? _gameState.board.moveHistory.last.from
+            : null,
+        lastMoveTo: _gameState.board.moveHistory.isNotEmpty
+            ? _gameState.board.moveHistory.last.to
+            : null,
+        onSquareTap: _onSquareTap,
+      ),
+    );
+  },
+),
           ],
         ),
       ),

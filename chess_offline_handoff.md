@@ -15,7 +15,7 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - **Sound:** audioplayers (added to pubspec.yaml, not yet implemented)
 - **Editor:** VS Code
 - **Test device:** Redmi Note 10 Pro, Android 13, USB debugging
-- **Dev machine:** Windows 11, Zyrex Ultera N100, 8GB RAM
+- **Dev machine:** Windows 11, Zyrex Ultura N100, 8GB RAM
 
 ---
 
@@ -29,8 +29,8 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - Local two-player pass-and-play ✅
 - Undo / move history ✅
 - Draw rules: threefold repetition, 50-move rule, insufficient material ✅
+- Time controls: 5 min / 10 min / Unlimited ✅
 - AI opponent with minimax + alpha-beta pruning (multiple difficulty levels) ❌ Phase 5
-- Time controls: 5 min / 10 min / Unlimited ❌ Phase 4
 - Board/piece themes ❌ Phase 6
 - Sound effects ❌ Phase 6
 
@@ -38,14 +38,16 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - Online multiplayer ❌ Phase 7
 
 ### Time control rules (agreed in spec)
-- Per-player countdown clocks
-- Clock pauses when app is backgrounded
-- Undo restores time spent on undone move
-- Timeout = loss (unless opponent has insufficient material → draw)
+- Per-player countdown clocks ✅
+- Clock pauses when app is backgrounded ✅
+- Undo restores time spent on undone move ✅
+- Timeout = loss (unless opponent has insufficient material → draw) ✅
 
 ### AI rules (agreed in spec)
 - Minimax + alpha-beta pruning (NOT Stockfish)
 - 2-3 difficulty levels controlled by search depth + randomness
+- AI plays as Black by default
+- Runs on a separate Isolate so UI doesn't freeze during think time (decision pending)
 
 ---
 
@@ -54,21 +56,24 @@ An offline chess Android app built with Flutter/Dart for personal use.
 ```
 chess_offline/
   lib/
-    main.dart
+    main.dart                 ✅ complete
     core/
-      move_generator.dart   ✅ complete
-      game_state.dart       ✅ complete
+      move_generator.dart     ✅ complete
+      game_state.dart         ✅ complete
+      clock.dart              ✅ complete
+      time_control.dart       ✅ complete
     models/
-      piece.dart            ✅ complete
-      position.dart         ✅ complete
-      move.dart             ✅ complete
-      board.dart            ✅ complete
-    state/                  (empty, for future provider state)
+      piece.dart              ✅ complete
+      position.dart           ✅ complete
+      move.dart               ✅ complete
+      board.dart              ✅ complete
+    state/                    (empty, for future provider state)
     ui/
       screens/
-        game_screen.dart    ✅ complete
+        setup_screen.dart     ✅ complete (time control only; game mode to be added in Phase 5)
+        game_screen.dart      ✅ complete
       widgets/
-        chess_board.dart    ✅ complete
+        chess_board.dart      ✅ complete
 ```
 
 ---
@@ -97,11 +102,23 @@ All headless (no UI dependency), pure Dart logic.
 ### Phase 2 — Basic Board UI ✅
 - `chess_board.dart` — Unicode piece rendering, tap-to-move, legal move dots/capture rings, last-move highlighting, promotion dialog
 - `game_screen.dart` — Turn indicator, check display, undo button, game-over dialog with "New Game" option
-- `main.dart` — Wired to `GameScreen` directly
+- `main.dart` — Wired to `SetupScreen`
 
 ### Phase 3 — Undo ✅
 - Implemented inside `game_state.dart` via `_history` stack of board snapshots
 - Undo button in `game_screen.dart` AppBar, disabled when nothing to undo
+
+### Phase 4 — Time Controls ✅
+- `clock.dart` — Per-player time container: `whiteRemaining`, `blackRemaining`, `switchPlayer()`, `decrement()`, `resetClocks()`, `hasTimeLeft()`. Uses `Duration.zero` as the unlimited sentinel.
+- `time_control.dart` — `TimeControlMode` enum: `unlimited`, `fiveMinutes`, `tenMinutes`
+- `setup_screen.dart` — Shown on app launch; player picks time mode, navigates to `GameScreen` passing chosen `Duration` and `TimeControlMode`
+- `game_screen.dart` updates:
+  - `Timer.periodic` ticks every second, decrements active player's clock
+  - `_clockSnapshots` list saves `(whiteRemaining, blackRemaining)` before every move for undo restoration
+  - `WidgetsBindingObserver` pauses clock on app background, resumes on foreground
+  - `_gameOver` bool prevents timeout dialog from firing multiple times
+  - Clock display in AppBar (turns red on timeout), undo restores clock snapshot
+  - Board locked to square shape via `LayoutBuilder` + `SizedBox` (width == height == screen width)
 
 ---
 
@@ -109,10 +126,17 @@ All headless (no UI dependency), pure Dart logic.
 - Legal move highlights appear on tap ✅
 - Turn switches correctly after each move ✅
 - Undo steps back correctly ✅
+- Undo restores clock time ✅
 - CHECK indicator appears when king is in check ✅
 - King can castle (kingside and queenside) ✅
 - Pawn promotion dialog appears and works ✅
-- Board renders cleanly (white line artifact fixed with `SizedBox.expand` + `ColoredBox`) ✅
+- Board renders cleanly ✅
+- Board is square shaped ✅
+- Setup screen shows time control options ✅
+- 5-min and 10-min clocks count down per player ✅
+- Clock pauses when app is backgrounded ✅
+- Timeout ends the game with a dialog (fires once only) ✅
+- Unlimited mode shows --:-- and never times out ✅
 
 ---
 
@@ -127,41 +151,29 @@ All headless (no UI dependency), pure Dart logic.
 
 ## Next Phase to Implement
 
-### Phase 4 — Time Controls
+### Phase 5 — AI Opponent
 Three files need to be created/modified:
 
-**1. Create `lib/core/clock.dart`**
-- Per-player countdown timer
-- `start()`, `pause()`, `resume()`, `reset()`
-- Callback when time runs out
-- Track time spent per move (for undo time restoration)
-- Pause when app goes to background (use `WidgetsBindingObserver`)
-
-**2. Create `lib/ui/screens/setup_screen.dart`**
-- Shown before `GameScreen`
-- Player picks time mode: 5 min / 10 min / Unlimited
-- Navigates to `GameScreen` passing the chosen time control
-
-**3. Update `lib/ui/screens/game_screen.dart`**
-- Display two clock widgets (one per player)
-- Wire clock to `makeMove()` — switch active clock after each move
-- Handle timeout: call game over if clock hits zero
-- Undo restores the time saved before that move was made
-- Pause/resume clock on app lifecycle changes
-
-**4. Update `lib/main.dart`**
-- Point `home:` to `SetupScreen()` instead of `GameScreen()`
-
----
-
-### Phase 5 — AI Opponent (after Phase 4)
-- Create `lib/core/ai_engine.dart`
+**1. Create `lib/core/ai_engine.dart`**
 - Minimax with alpha-beta pruning
 - Piece-square evaluation tables for positional scoring
-- Difficulty levels: Easy (depth 1-2 + randomness), Medium (depth 3), Hard (depth 4-5)
-- Run on a separate `Isolate` so UI doesn't freeze during AI "think" time
-- Add "vs AI" mode option to `SetupScreen`
-- AI plays as Black by default
+- Difficulty levels:
+  - Easy: depth 1–2 + randomness
+  - Medium: depth 3
+  - Hard: depth 4–5
+- Decision pending: run on separate Isolate (smooth UI) vs simple call (may freeze briefly on Hard)
+
+**2. Update `lib/ui/screens/setup_screen.dart`**
+- Add game mode selection: 2-Player vs vs-AI
+- If vs-AI selected, show difficulty picker (Easy / Medium / Hard)
+- Then show time control picker (existing)
+- Pass game mode + difficulty to `GameScreen`
+
+**3. Update `lib/ui/screens/game_screen.dart`**
+- Accept `isVsAI` bool and `AiDifficulty` level as constructor params
+- After human (White) makes a move, trigger AI to compute Black's move
+- Show a subtle "AI thinking..." indicator while computing
+- AI move applied automatically, clocks switch as normal
 
 ---
 
@@ -179,11 +191,7 @@ Three files need to be created/modified:
 ---
 
 ## Key Files — Full Source Code
-
-All source files are on GitHub at the repo pushed during this session.
-The commit message was **"Phase 0 and Phase 1"** (note: Phases 2 and 3 were
-added in the same session but may have been pushed under the same commit or a
-follow-up — check the repo for latest state).
+All source files are on GitHub.
 
 **pubspec.yaml dependencies to confirm are present:**
 ```yaml
@@ -216,3 +224,5 @@ dependencies:
 | Two white lines on board | Replaced `Container` with `SizedBox.expand` + `ColoredBox` + `StackFit.expand` |
 | `print()` not showing in terminal | MIUI filters logcat — use UI display for debug output instead |
 | Two app processes running (two PIDs) | Full quit (`q`) then fresh `flutter run`, not hot restart |
+| Board rendering as rectangle | Wrapped `ChessBoard` in `LayoutBuilder` + `SizedBox` with width == height == `constraints.maxWidth` |
+| Timeout dialog firing multiple times | Added `_gameOver` bool flag; cancel timer before showing dialog |
