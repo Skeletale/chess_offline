@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/ai_engine.dart';
 import '../../core/clock.dart';
 import '../../core/game_state.dart';
+import '../../core/sound_manager.dart';
+import '../../models/board_theme.dart';
 import '../../models/move.dart';
 import '../../models/piece.dart';
 import '../../models/position.dart';
@@ -15,12 +17,14 @@ class GameScreen extends StatefulWidget {
   final TimeControlMode timeControlMode;
   final AiDifficulty? aiDifficulty; // null = 2-player mode
   final PieceColor humanColor; // which side the human plays in vs-AI mode
+  final BoardTheme boardTheme;
 
   const GameScreen({
     super.key,
     required this.whiteTime,
     required this.blackTime,
     required this.timeControlMode,
+    required this.boardTheme,
     this.aiDifficulty,
     this.humanColor = PieceColor.white,
   });
@@ -126,6 +130,21 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Plays the appropriate sound for a just-applied move: capture takes
+  /// priority visually/audibly, then check, otherwise a plain move sound.
+  void _playSoundFor(Move move) {
+    if (move.isCapture) {
+      SoundManager.playCapture();
+    } else {
+      SoundManager.playMove();
+    }
+    // Check sound plays in addition, slightly after, if the move gives check.
+    final opponent = move.piece.color == PieceColor.white ? PieceColor.black : PieceColor.white;
+    if (_gameState.isKingInCheck(opponent)) {
+      SoundManager.playCheck();
+    }
+  }
+
   Future<void> _attemptMove(List<Move> matchingMoves) async {
     Move moveToPlay = matchingMoves.first;
 
@@ -153,6 +172,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       _legalTargets = [];
       _clock.switchPlayer();
     });
+
+    _playSoundFor(moveToPlay);
 
     _checkTimeout();
     if (_gameOver) return;
@@ -183,6 +204,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
         _clock.switchPlayer();
         _isAiThinking = false;
       });
+
+      _playSoundFor(move);
 
       _checkTimeout();
       if (!_gameOver) _checkGameOver();
@@ -239,6 +262,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     _gameClockTimer = null;
     _gameOver = true;
 
+    SoundManager.playGameEnd();
+
     final loser = whiteOut ? PieceColor.white : PieceColor.black;
     final message = '${loser == PieceColor.white ? "White" : "Black"}\'s time ran out!';
 
@@ -273,6 +298,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     _gameClockTimer?.cancel();
     _gameClockTimer = null;
     _gameOver = true;
+
+    SoundManager.playGameEnd();
 
     String message;
     switch (result) {
@@ -484,6 +511,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                   height: boardSize,
                   child: ChessBoard(
                     board: _gameState.board,
+                    theme: widget.boardTheme,
                     selectedSquare: _selectedSquare,
                     legalTargets: _legalTargets,
                     lastMoveFrom: _gameState.board.moveHistory.isNotEmpty

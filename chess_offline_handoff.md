@@ -11,17 +11,18 @@ An offline chess Android app built with Flutter/Dart for personal use.
 ## Tech Stack
 
 - **Framework:** Flutter (Dart)
-- **State management:** Provider (added to pubspec.yaml, not yet wired up)
-- **Sound:** audioplayers (added to pubspec.yaml, not yet implemented)
+- **State management:** Provider (added to pubspec.yaml, not actively used — game state is managed via plain StatefulWidget/setState so far)
+- **Sound:** audioplayers (fully implemented — see Phase 6)
+- **Persistence:** shared_preferences (used for saved board theme)
 - **Editor:** VS Code
 - **Test device:** Redmi Note 10 Pro, Android 13, USB debugging
-- **Dev machine:** Windows 11, Zyrex Ultura N100, 8GB RAM
+- **Dev machine:** Windows 11, Zyrex Ultra N100, 8GB RAM
 
 ---
 
 ## Agreed Features (from spec sessions)
 
-### Must-have (all implemented unless noted)
+### Must-have (ALL COMPLETE)
 - Legal move enforcement (castling, en passant, promotion) ✅
 - Check / checkmate / stalemate detection ✅
 - Basic board UI with unicode pieces ✅
@@ -32,13 +33,14 @@ An offline chess Android app built with Flutter/Dart for personal use.
 - Time controls: 5 min / 10 min / Unlimited ✅
 - AI opponent with minimax + alpha-beta pruning (multiple difficulty levels) ✅
 - Captured pieces display ✅ (added during Phase 5, not originally scoped but small enough to fold in)
-- Board/piece themes ❌ Phase 6
-- Sound effects ❌ Phase 6
+- Board themes ✅ (Phase 6)
+- Sound effects ✅ (Phase 6)
 
 ### Nice-to-have (deferred)
-- Online multiplayer ❌ Phase 7
+- Online multiplayer ❌ Phase 7 — originally scoped as "maybe later," not a hard requirement. All must-have features are now complete without it.
+- Custom piece image sets (currently Unicode symbols, which look clean) — not planned unless requested
 
-### Time control rules (agreed in spec)
+### Time control rules (agreed in spec, all implemented)
 - Per-player countdown clocks ✅
 - Clock pauses when app is backgrounded ✅
 - Undo restores time spent on undone move ✅
@@ -47,9 +49,19 @@ An offline chess Android app built with Flutter/Dart for personal use.
 ### AI rules (agreed in spec, all implemented)
 - Minimax (negamax formulation) + alpha-beta pruning (NOT Stockfish) ✅
 - 3 difficulty levels controlled by search depth + randomness: Easy (depth 2, 30% random move), Medium (depth 3), Hard (depth 4) ✅
-- Player can choose to play as White or Black (AI takes the other side) ✅ — expanded from original "AI plays as Black by default"
+- Player can choose to play as White or Black (AI takes the other side) ✅
 - Runs on a separate Isolate via `compute()` so UI doesn't freeze during think time ✅
-- Minimum 2-second "thinking" delay enforced on every AI move (via `Future.wait` with the real computation) so Easy/Medium responses don't feel instant/unnatural ✅
+- Minimum 2-second "thinking" delay enforced on every AI move so responses don't feel instant/unnatural ✅
+
+### Theme rules (agreed in spec, all implemented)
+- 4 presets: Classic Green, Brown Wood, Blue Ocean, Gray Coral ✅
+- Picker accessed via a palette icon button on the Setup screen (not a separate settings screen) ✅
+- Selected theme persists across app restarts via shared_preferences ✅
+
+### Sound rules (agreed in spec, all implemented)
+- 4 sound effects: move, capture, check, game-end ✅
+- Sourced as CC0/free-license files from Freesound.org and Kenney.nl (see "Sound Assets" section below) ✅
+- Low-latency, no-delay playback even on rapid move sequences ✅
 
 ---
 
@@ -57,26 +69,37 @@ An offline chess Android app built with Flutter/Dart for personal use.
 
 ```
 chess_offline/
+  assets/
+    sounds/
+      move.wav                ✅ CC0 (Freesound - mh2o)
+      capture.mp3              ✅ CC0 (Freesound - el_boss)
+      check.ogg                 ✅ CC0 (Kenney UI Audio pack)
+      game_end.ogg                ✅ CC0 (Kenney UI Audio pack)
+    icon/
+      app_icon.png             ✅ custom-designed pawn silhouette icon (1024x1024)
   lib/
-    main.dart                 ✅ complete
+    main.dart                     ✅ complete — preloads sounds at startup, launches SetupScreen
     core/
-      move_generator.dart     ✅ complete
-      game_state.dart         ✅ complete
-      clock.dart              ✅ complete
-      time_control.dart       ✅ complete
-      ai_engine.dart          ✅ complete
+      move_generator.dart         ✅ complete
+      game_state.dart              ✅ complete
+      clock.dart                    ✅ complete
+      time_control.dart              ✅ complete
+      ai_engine.dart                   ✅ complete
+      theme_storage.dart                ✅ complete
+      sound_manager.dart                 ✅ complete
     models/
-      piece.dart              ✅ complete
-      position.dart           ✅ complete
-      move.dart               ✅ complete
-      board.dart              ✅ complete
-    state/                    (empty, for future provider state)
+      piece.dart                          ✅ complete
+      position.dart                         ✅ complete
+      move.dart                              ✅ complete
+      board.dart                               ✅ complete
+      board_theme.dart                          ✅ complete
+    state/                                      (empty — provider added but not wired up; state currently lives in StatefulWidgets)
     ui/
       screens/
-        setup_screen.dart     ✅ complete (game mode, difficulty, play-as-color, time control)
-        game_screen.dart      ✅ complete
+        setup_screen.dart                        ✅ complete (game mode, difficulty, play-as-color, time control, theme picker)
+        game_screen.dart                          ✅ complete (board, clocks, undo, captured pieces, sound triggers)
       widgets/
-        chess_board.dart      ✅ complete
+        chess_board.dart                           ✅ complete (theme-aware rendering)
 ```
 
 ---
@@ -86,7 +109,7 @@ chess_offline/
 ### Phase 0 — Project Scaffolding ✅
 - Flutter project created: `chess_offline`
 - Folder structure set up
-- Dependencies added: `provider`, `audioplayers`
+- Dependencies added: `provider`, `audioplayers`, `shared_preferences`
 - App confirmed running on Redmi Note 10 Pro via USB debugging
 
 ### Phase 1 — Core Chess Engine ✅
@@ -114,58 +137,76 @@ All headless (no UI dependency), pure Dart logic.
 ### Phase 4 — Time Controls ✅
 - `clock.dart` — Per-player time container: `whiteRemaining`, `blackRemaining`, `switchPlayer()`, `decrement()`, `resetClocks()`, `hasTimeLeft()`. Uses `Duration.zero` as the unlimited sentinel.
 - `time_control.dart` — `TimeControlMode` enum: `unlimited`, `fiveMinutes`, `tenMinutes`
-- `setup_screen.dart` — Shown on app launch; player picks time mode, navigates to `GameScreen` passing chosen `Duration` and `TimeControlMode`
-- `game_screen.dart` updates:
+- `setup_screen.dart` — Player picks time mode, navigates to `GameScreen` passing chosen `Duration` and `TimeControlMode`
+- `game_screen.dart`:
   - `Timer.periodic` ticks every second, decrements active player's clock
   - `_clockSnapshots` list saves `(whiteRemaining, blackRemaining)` before every move for undo restoration
   - `WidgetsBindingObserver` pauses clock on app background, resumes on foreground
   - `_gameOver` bool prevents timeout dialog from firing multiple times
-  - Clock display in AppBar (turns red on timeout, dark green background, White/Black labels), undo restores clock snapshot
-  - Board locked to square shape via `LayoutBuilder` + `SizedBox` (width == height == screen width)
+  - Clock display in AppBar (turns red on timeout), undo restores clock snapshot
+  - Board locked to square shape via `LayoutBuilder` + `SizedBox`
 
 ### Phase 5 — AI Opponent ✅
 - `ai_engine.dart`:
   - `AiDifficulty` enum: `easy`, `medium`, `hard`
   - Negamax search with alpha-beta pruning, depths: Easy = 2, Medium = 3, Hard = 4
-  - Easy mode has a 30% chance of playing a random legal move instead of the best one (for variety/beatability)
-  - Piece-square tables for pawn/knight/bishop/rook/queen/king positional scoring, plus standard material values
-  - `AiEngine.getBestMove()` runs the search via Flutter's `compute()` so it executes on a separate Isolate — UI never freezes, even on Hard
-- `setup_screen.dart` updates:
+  - Easy mode has a 30% chance of playing a random legal move instead of the best one
+  - Piece-square tables for positional scoring, plus standard material values
+  - `AiEngine.getBestMove()` runs via `compute()` on a separate Isolate — UI never freezes
+- `setup_screen.dart`:
   - `GameMode` enum (`twoPlayer` / `vsAi`) picker
-  - When vs-AI selected: difficulty picker (Easy/Medium/Hard) and "Play As" picker (White/Black) appear
-  - Start button only enables once all required selections for the chosen mode are made
-- `game_screen.dart` updates:
-  - New params: `aiDifficulty` (null = 2-player) and `humanColor` (which side the human plays)
-  - `_isAiThinking` flag blocks board taps and swaps the turn indicator for a "AI is thinking..." spinner
-  - AI move auto-triggers after the human's move (or immediately on game start if the human chose Black)
-  - Minimum 2-second "thinking" delay enforced via `Future.wait([AiEngine.getBestMove(...), Future.delayed(2s)])` so fast Easy/Medium responses don't feel instant
-  - Undo in vs-AI mode undoes both the AI's move and the human's move together (so it always lands back on the human's turn)
-  - Captured pieces shown as two rows above/below the board, derived live from `board.moveHistory` (stays correct through undo automatically)
+  - Difficulty picker and "Play As" picker appear when vs-AI selected
+- `game_screen.dart`:
+  - `aiDifficulty` (null = 2-player) and `humanColor` params
+  - `_isAiThinking` flag blocks board taps, shows "AI is thinking..." spinner
+  - Minimum 2-second "thinking" delay via `Future.wait([...])`
+  - Undo in vs-AI mode undoes both AI's move and human's move together
+  - Captured pieces shown above/below board, derived live from `board.moveHistory`
+
+### Phase 6 — Themes & Sound ✅
+
+**Board Themes:**
+- `board_theme.dart` — `BoardTheme` class (lightSquare, darkSquare, selectedSquare, lastMoveLight, lastMoveDark colors) + 4 presets: `classicGreen`, `brownWood`, `blueOcean`, `grayCoral`, collected in `BoardTheme.all`
+- `theme_storage.dart` — Saves/loads the selected theme's **index** in `BoardTheme.all` via `shared_preferences` (key: `selected_board_theme_index`). ⚠️ **Important:** if `BoardTheme.all`'s order is ever changed/reordered, previously saved indices will point to the wrong theme. Don't reorder the list — only append new themes to the end.
+- `chess_board.dart` — Takes a required `BoardTheme theme` param, uses it for all square/highlight colors instead of hardcoded values
+- `setup_screen.dart` — Palette icon button in AppBar opens a dialog listing all themes with a 4-square color swatch preview and a checkmark on the current selection; loads saved theme on `initState`, saves immediately on selection
+- `game_screen.dart` — Takes `boardTheme` param, passes to `ChessBoard`
+
+**Sound Effects:**
+- Sound files sourced as CC0/free-license from:
+  - `move.wav` — Freesound.org, user mh2o, "chess_move_on_alabaster.wav" (CC0)
+  - `capture.mp3` — Freesound.org, user el_boss, "Piece Placement.mp3" (CC0)
+  - `check.ogg` — Kenney.nl "UI Audio" pack (CC0, no attribution needed)
+  - `game_end.ogg` — Kenney.nl "UI Audio" pack (CC0, no attribution needed)
+- Stored in `assets/sounds/`, registered in `pubspec.yaml` under `flutter: assets:`
+- `sound_manager.dart`:
+  - One **persistent** `AudioPlayer` instance per sound type (not created fresh per play — this was the fix for delay/dropout issues, see Common Issues table)
+  - `SoundManager.init()` called once at app startup (in `main.dart`) to set `PlayerMode.lowLatency` on all 4 players ahead of time
+  - Each play call does `player.stop()` then `player.play(AssetSource(...))` — this is the reliable pattern; an earlier `seek()`+`resume()` approach silently failed on-device and produced no sound at all
+  - `SoundManager.enabled` bool flag exists for a future mute toggle (not yet wired to any UI)
+- `main.dart` — `main()` is now `async`, calls `WidgetsFlutterBinding.ensureInitialized()` then `await SoundManager.init()` before `runApp()`
+- `game_screen.dart` — `_playSoundFor(Move move)` helper: plays capture sound if `move.isCapture`, else plain move sound; additionally plays check sound if the move puts the opponent in check. Called after both human moves (`_attemptMove`) and AI moves (`_triggerAiMove`). `SoundManager.playGameEnd()` called in both `_checkTimeout()` and `_checkGameOver()`.
 
 ---
 
 ## Verified Working (manual testing on device)
 - Legal move highlights appear on tap ✅
 - Turn switches correctly after each move ✅
-- Undo steps back correctly ✅
-- Undo restores clock time ✅
+- Undo steps back correctly, restores clock time ✅
 - CHECK indicator appears when king is in check ✅
 - King can castle (kingside and queenside) ✅
 - Pawn promotion dialog appears and works ✅
-- Board renders cleanly ✅
-- Board is square shaped ✅
-- Setup screen shows time control options ✅
-- 5-min and 10-min clocks count down per player ✅
-- Clock pauses when app is backgrounded ✅
+- Board renders cleanly, square-shaped ✅
+- Setup screen: game mode, difficulty, play-as-color, time control, theme all selectable ✅
+- 5-min and 10-min clocks count down per player, pause when app backgrounded ✅
 - Timeout ends the game with a dialog (fires once only) ✅
 - Unlimited mode shows --:-- and never times out ✅
-- Setup screen: game mode, difficulty, play-as-color, time control all selectable ✅
-- AI makes legal moves at all 3 difficulty levels ✅
-- AI opens as White automatically when human picks Black ✅
-- AI move always takes at least ~2 seconds (feels natural, not instant) ✅
-- UI stays responsive while AI is "thinking" (no freeze, confirmed on Redmi Note 10 Pro) ✅
+- AI makes legal moves at all 3 difficulty levels, doesn't freeze UI ✅
+- AI move always takes at least ~2 seconds ✅
 - Undo in vs-AI mode correctly undoes both AI + human moves together ✅
 - Captured pieces display above/below board, updates correctly through undo ✅
+- Board theme picker works, selection persists after closing/reopening the app ✅
+- All 4 sound effects (move/capture/check/game-end) play correctly and reliably, even on rapid move sequences ✅
 
 ---
 
@@ -178,31 +219,65 @@ All headless (no UI dependency), pure Dart logic.
 
 ---
 
-## Next Phase to Implement
+## Current Project Status
 
-### Phase 6 — Themes & Sound
-- Multiple board color themes (Classic green, Brown wood, Blue ocean, etc.)
-- Multiple piece sets (unicode symbols already in place, can add image-based sets)
-- Sound effects via `audioplayers`: move, capture, check, game-end
-- Settings screen to pick theme and toggle sound
+**All originally-scoped must-have features are complete**, plus a custom app icon. The app is a fully playable, offline chess game with legal move enforcement, check/checkmate/stalemate/draw detection, undo, time controls, an AI opponent with 3 difficulty levels, board themes, sound effects, and a custom launcher icon — all verified working on the actual test device (Redmi Note 10 Pro).
 
----
+### App Icon ✅
+- Custom pawn-silhouette icon designed (cream-white pawn on dark green background, subtle diagonal checker accent), matching the app's Classic Green theme color
+- Source image: `assets/icon/app_icon.png` (1024x1024)
+- `flutter_launcher_icons` package (dev dependency) used to generate both standard and Android adaptive icons
+- Config added to `pubspec.yaml`:
+  ```yaml
+  flutter_launcher_icons:
+    android: true
+    ios: false
+    image_path: "assets/icon/app_icon.png"
+    min_sdk_android: 21
+    adaptive_icon_background: "#2D6A4F"
+    adaptive_icon_foreground: "assets/icon/app_icon.png"
+  ```
+- Generated via `flutter pub run flutter_launcher_icons` — this also auto-created a missing `colors.xml` in the Android project for the adaptive icon background
+- Verified showing correctly on Redmi Note 10 Pro home screen after full reinstall (`flutter run` after quitting the previous session — icon changes require a fresh install, not hot reload)
 
-### Phase 7 — Online Multiplayer (deferred, much later)
-- Not planned for near future
+## Possible Next Steps (not yet decided/scoped)
+
+1. **Polish pass** — bug hunting, edge case testing (e.g. underpromotion edge cases, simultaneous check+timeout races)
+2. **Phase 7 — Online Multiplayer** — originally deferred as "maybe later," not a hard requirement. Would need architecture decisions (peer-to-peer vs. server-based, how offline-first app handles connectivity, etc.) — not yet scoped in any spec session.
+3. **Settings/mute toggle** — `SoundManager.enabled` flag already exists in code but has no UI control yet; would be a small addition if wanted.
 
 ---
 
 ## Key Files — Full Source Code
-All source files are on GitHub.
+All source files are on GitHub (private repo, pushed incrementally after each phase).
 
-**pubspec.yaml dependencies to confirm are present:**
+**pubspec.yaml dependencies:**
 ```yaml
 dependencies:
   flutter:
     sdk: flutter
   provider: ^6.1.2
   audioplayers: ^6.1.0
+  shared_preferences: ^2.3.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#2D6A4F"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
 ```
 
 ---
@@ -215,6 +290,8 @@ dependencies:
 5. Always `Ctrl+K S` (save all files) before running `flutter run`
 6. Always full-replace files rather than partial edits to avoid bracket mismatches
 7. After each phase, commit to GitHub: `git add . && git commit -m "Phase X" && git push`
+8. When a design decision could bite us later (e.g. index-based storage tied to list order), write it down in this doc immediately as a note, not just in chat
+9. App icon changes require a full reinstall (uninstall + `flutter run`), not hot reload — Android caches launcher icons aggressively
 
 ---
 
@@ -229,3 +306,16 @@ dependencies:
 | Two app processes running (two PIDs) | Full quit (`q`) then fresh `flutter run`, not hot restart |
 | Board rendering as rectangle | Wrapped `ChessBoard` in `LayoutBuilder` + `SizedBox` with width == height == `constraints.maxWidth` |
 | Timeout dialog firing multiple times | Added `_gameOver` bool flag; cancel timer before showing dialog |
+| Sound delayed / sometimes missing on rapid moves | Creating a fresh `AudioPlayer` per play call has too much overhead. Fixed by using one **persistent** `AudioPlayer` per sound type, set to `PlayerMode.lowLatency`, reused across all plays |
+| Sound stopped working entirely after first low-latency attempt | `seek()` immediately after `setSource()` fails silently in low-latency mode on-device. Fixed by using `player.stop()` then `player.play(AssetSource(...))` each time instead of `seek()`+`resume()` |
+| `flutter pub get` didn't error but package "not found" when running it | pubspec.yaml edit wasn't saved (`Ctrl+K S`) before running the command — Flutter read the old file from disk |
+| Missing `colors.xml` warning during icon generation | Not an error — `flutter_launcher_icons` auto-creates it when missing (needed for adaptive icon background color) |
+
+---
+
+## Notes / Gotchas to Keep in Mind
+
+- **`BoardTheme.all` order is load-bearing.** The saved theme preference is just an integer index into this list. Never reorder or remove entries — only append new ones at the end, or saved preferences on real devices will silently point to the wrong theme.
+- **Sound files are mixed formats** (`.wav`, `.mp3`, `.ogg`) — this is fine, `audioplayers` handles all of them via `AssetSource`, no need to standardize format.
+- **Provider dependency is installed but unused so far.** All state currently lives in `StatefulWidget`/`setState`. If the app grows more complex (e.g. multiplayer, more shared state), consider migrating to Provider then rather than continuing to add ad-hoc state.
+- **App icon changes need a full reinstall, not hot reload.** Android launchers cache icons aggressively — always fully quit and re-run, or uninstall first if it still doesn't update.

@@ -1,10 +1,13 @@
 // ──────────────────────────────────────────────────────────────
-//  Entry point – now launches the SetupScreen instead of GameScreen
+//  Entry point – launches the SetupScreen, preloads sound effects
 // ──────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
+import 'core/sound_manager.dart';
 import 'ui/screens/setup_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SoundManager.init();
   runApp(const ChessApp());
 }
 

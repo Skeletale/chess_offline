@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:chess_offline/core/ai_engine.dart';
+import 'package:chess_offline/core/theme_storage.dart';
 import 'package:chess_offline/core/time_control.dart';
+import 'package:chess_offline/models/board_theme.dart';
 import 'package:chess_offline/models/piece.dart';
 import 'game_screen.dart';
 
@@ -18,6 +20,18 @@ class _SetupScreenState extends State<SetupScreen> {
   AiDifficulty? _difficulty;
   PieceColor? _playerColor;
   TimeControlMode? _timeControl;
+  BoardTheme _boardTheme = BoardTheme.classicGreen;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedTheme();
+  }
+
+  Future<void> _loadSavedTheme() async {
+    final saved = await ThemeStorage.loadTheme();
+    setState(() => _boardTheme = saved);
+  }
 
   bool get _canStart {
     if (_gameMode == null || _timeControl == null) return false;
@@ -46,9 +60,45 @@ class _SetupScreenState extends State<SetupScreen> {
           timeControlMode: mode,
           aiDifficulty: _gameMode == GameMode.vsAi ? _difficulty : null,
           humanColor: _gameMode == GameMode.vsAi ? _playerColor! : PieceColor.white,
+          boardTheme: _boardTheme,
         ),
       ),
     );
+  }
+
+  Future<void> _openThemePicker() async {
+    final chosen = await showDialog<BoardTheme>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Board Theme'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: BoardTheme.all.length,
+              itemBuilder: (context, index) {
+                final theme = BoardTheme.all[index];
+                final isSelected = theme.name == _boardTheme.name;
+                return ListTile(
+                  onTap: () => Navigator.of(context).pop(theme),
+                  leading: _ThemeSwatch(theme: theme),
+                  title: Text(theme.name),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle, color: Color(0xFF2D6A4F))
+                      : null,
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+
+    if (chosen != null) {
+      setState(() => _boardTheme = chosen);
+      await ThemeStorage.saveTheme(chosen);
+    }
   }
 
   @override
@@ -58,6 +108,13 @@ class _SetupScreenState extends State<SetupScreen> {
         title: const Text('Setup Game'),
         backgroundColor: const Color(0xFF2D6A4F),
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.palette_outlined),
+            tooltip: 'Board Theme',
+            onPressed: _openThemePicker,
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -183,6 +240,40 @@ class _SetupScreenState extends State<SetupScreen> {
             ))
         .toList(),
   );
+}
+
+class _ThemeSwatch extends StatelessWidget {
+  final BoardTheme theme;
+
+  const _ThemeSwatch({required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: ColoredBox(color: theme.lightSquare)),
+                Expanded(child: ColoredBox(color: theme.darkSquare)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: ColoredBox(color: theme.darkSquare)),
+                Expanded(child: ColoredBox(color: theme.lightSquare)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ChoiceButton extends StatelessWidget {

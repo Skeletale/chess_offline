@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/board.dart';
+import '../../models/board_theme.dart';
 import '../../models/move.dart';
 import '../../models/piece.dart';
 import '../../models/position.dart';
@@ -29,6 +30,7 @@ String pieceSymbol(Piece piece) {
 
 class ChessBoard extends StatelessWidget {
   final Board board;
+  final BoardTheme theme;
   final Position? selectedSquare;
   final List<Move> legalTargets;
   final Position? lastMoveFrom;
@@ -38,6 +40,7 @@ class ChessBoard extends StatelessWidget {
   const ChessBoard({
     super.key,
     required this.board,
+    required this.theme,
     required this.onSquareTap,
     this.selectedSquare,
     this.legalTargets = const [],
@@ -66,8 +69,7 @@ class ChessBoard extends StatelessWidget {
 
   Widget _buildSquare(Position pos) {
     final isDark = (pos.row + pos.col) % 2 == 1;
-    final baseColor =
-        isDark ? const Color(0xFF769656) : const Color(0xFFEEEED2);
+    final baseColor = isDark ? theme.darkSquare : theme.lightSquare;
 
     final isSelected = selectedSquare == pos;
     final isLastMove = pos == lastMoveFrom || pos == lastMoveTo;
@@ -77,9 +79,9 @@ class ChessBoard extends StatelessWidget {
 
     Color squareColor = baseColor;
     if (isSelected) {
-      squareColor = const Color(0xFFF6F669);
+      squareColor = theme.selectedSquare;
     } else if (isLastMove) {
-      squareColor = isDark ? const Color(0xFFBACA44) : const Color(0xFFF6F6A0);
+      squareColor = isDark ? theme.lastMoveDark : theme.lastMoveLight;
     }
 
     final piece = board.pieceAt(pos);
